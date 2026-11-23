@@ -1,6 +1,8 @@
 package com.sherubhai.assistant
 
 import android.Manifest
+import android.os.Handler
+import android.os.Looper
 import android.app.AlertDialog
 import android.app.Activity
 import android.content.Intent
@@ -23,6 +25,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var command: EditText
     private var torchId: String? = null
     private var sharedText = ""
+    private var lastAiDraft = ""
+    private val prefs by lazy { getSharedPreferences("sheru_config", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,6 +49,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         layout.addView(command, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         layout.addView(send)
         layout.addView(mic)
+        val ai = Button(this).apply { text = "Ask AI"; setOnClickListener { askAi(command.text.toString()) } }
+        val config = Button(this).apply { text = "Configure AI server"; setOnClickListener { configureAi() } }
+        layout.addView(ai)
+        layout.addView(config)
         val reply = Button(this).apply {
             text = "Draft and share reply"
             setOnClickListener { draftSharedReply() }
@@ -59,6 +67,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val answer = when {
             text == "torch on" || text == "flashlight on" || text == "turn on torch" -> setTorch(true)
             text == "torch off" || text == "flashlight off" || text == "turn off torch" -> setTorch(false)
+            text.startsWith("ask ai ") -> { askAi(raw.substring(7)); return }
             text == "read shared text" -> if (sharedText.isBlank()) "Share text to Sheru Bhai first." else sharedText
             text == "reply to shared text" -> { draftSharedReply(); return }
             text == "volume up" || text == "increase volume" -> changeVolume(true)
@@ -135,6 +144,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
         val editor = EditText(this).apply {
             hint = "Write or edit your reply"
+            setText(lastAiDraft)
             minLines = 3
         }
         AlertDialog.Builder(this)
@@ -156,6 +166,60 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                         startActivity(Intent.createChooser(send, "Choose messaging app"))
                     }.show()
             }.show()
+    }
+
+    private fun configureAi() {
+        val holder = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 12, 24, 12)
+        }
+        val endpoint = EditText(this).apply {
+            hint = "https://your-server.example/chat"
+            setSingleLine(true)
+            setText(prefs.getString("endpoint", ""))
+        }
+        val token = EditText(this).apply {
+            hint = "Private access token (not provider API key)"
+            setSingleLine(true)
+            inputType = 129
+            setText(prefs.getString("token", ""))
+        }
+        holder.addView(endpoint)
+        holder.addView(token)
+        AlertDialog.Builder(this).setTitle("Trusted AI relay")
+            .setView(holder)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                val url = endpoint.text.toString().trim()
+                if (!url.startsWith("https://")) {
+                    result.text = "Use a trusted HTTPS server."
+                } else {
+                    prefs.edit().putString("endpoint", url)
+                        .putString("token", token.text.toString()).apply()
+                    result.text = "AI server configured. Shared text is sent only when you tap Ask AI."
+                }
+            }.show()
+    }
+
+    private fun askAi(message: String) {
+        val endpoint = prefs.getString("endpoint", "").orEmpty()
+        val token = prefs.getString("token", "").orEmpty()
+        if (endpoint.isBlank() || token.isBlank()) {
+            result.text = "Configure your HTTPS AI server and access token first."
+            return
+        }
+        if (message.isBlank()) { result.text = "Enter a question for AI."; return }
+        val context = sharedText
+        result.text = "Asking AI..."
+        Thread {
+            val answer = try { AiGateway.ask(endpoint, token, message, context) }
+            catch (e: Exception) { "AI unavailable: ${e.message ?: "connection error"}" }
+            Handler(Looper.getMainLooper()).post {
+                lastAiDraft = answer
+                result.text = answer
+                if (speechReady) tts?.speak(answer.take(1500), TextToSpeech.QUEUE_FLUSH, null, "ai-response")
+            }
+        }.start()
     }
 
     private fun setTorch(on: Boolean): String {
