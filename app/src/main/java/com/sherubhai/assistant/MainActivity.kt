@@ -1,6 +1,9 @@
 package com.sherubhai.assistant
 
 import android.Manifest
+import android.app.AlertDialog
+import android.app.Notification
+import android.service.notification.StatusBarNotification
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -21,6 +24,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var result: TextView
     private lateinit var command: EditText
     private var torchId: String? = null
+    private var selectedNotification: StatusBarNotification? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +47,21 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         layout.addView(command, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         layout.addView(send)
         layout.addView(mic)
+        val enableNotifications = Button(this).apply {
+            text = "Enable notification access"
+            setOnClickListener { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+        }
+        val readNotifications = Button(this).apply {
+            text = "Show recent notifications"
+            setOnClickListener { showNotifications() }
+        }
+        val draftReply = Button(this).apply {
+            text = "Reply to selected notification"
+            setOnClickListener { prepareReply() }
+        }
+        layout.addView(enableNotifications)
+        layout.addView(readNotifications)
+        layout.addView(draftReply)
         setContentView(layout)
     }
 
@@ -51,6 +70,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val answer = when {
             text == "torch on" || text == "flashlight on" || text == "turn on torch" -> setTorch(true)
             text == "torch off" || text == "flashlight off" || text == "turn off torch" -> setTorch(false)
+            text == "read notifications" || text == "show notifications" -> { showNotifications(); return }
+            text == "reply to notification" -> { prepareReply(); return }
             text == "volume up" || text == "increase volume" -> changeVolume(true)
             text == "volume down" || text == "decrease volume" -> changeVolume(false)
             text == "open settings" -> try { startActivity(Intent(Settings.ACTION_SETTINGS)); "Opening Settings" } catch (e: Exception) { "Settings unavailable" }
@@ -98,6 +119,53 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         tts?.stop()
         tts?.shutdown()
         super.onDestroy()
+    }
+
+    private fun showNotifications() {
+        if (SheruNotificationService.instance == null) {
+            result.text = "Enable notification access in Android Settings first."
+            return
+        }
+        val items = SheruNotificationService.recent().filter {
+            val e = it.notification.extras
+            !e.getCharSequence(Notification.EXTRA_TITLE).isNullOrBlank() ||
+                !e.getCharSequence(Notification.EXTRA_TEXT).isNullOrBlank()
+        }
+        if (items.isEmpty()) { result.text = "No readable active notifications."; return }
+        val labels = items.map {
+            val e = it.notification.extras
+            val title = e.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: it.packageName
+            val body = e.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: "(no preview)"
+            "$title: $body"
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Choose notification (local only)")
+            .setItems(labels) { _, index ->
+                selectedNotification = items[index]
+                result.text = labels[index]
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun prepareReply() {
+        val item = selectedNotification
+        if (item == null) { result.text = "Select a notification first."; return }
+        val input = EditText(this).apply { hint = "Type your reply" }
+        AlertDialog.Builder(this).setTitle("Draft reply")
+            .setView(input)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Review") { _, _ ->
+                val message = input.text.toString().trim()
+                if (message.isBlank()) { result.text = "Empty reply not sent."; return@setPositiveButton }
+                AlertDialog.Builder(this)
+                    .setTitle("Confirm sending reply")
+                    .setMessage("Send this reply through the selected notification?\n\n$message")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Send") { _, _ ->
+                        val ok = SheruNotificationService.instance?.sendReply(item, message) == true
+                        result.text = if (ok) "Reply submitted to the messaging app." else "This notification does not support direct replies."
+                    }.show()
+            }.show()
     }
 
     private fun setTorch(on: Boolean): String {
