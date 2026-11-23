@@ -1,14 +1,11 @@
 package com.sherubhai.assistant
 
 import android.Manifest
-import android.accessibilityservice.AccessibilityService
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraManager
-import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.*
 import java.util.Locale
@@ -26,21 +23,16 @@ class MainActivity : Activity() {
         }
         val title = TextView(this).apply { text = "Sheru Bhai"; textSize = 28f }
         result = TextView(this).apply {
-            text = "Ready. Try: torch on, torch off, open calculator, home, back, scroll down."
+            text = "Safe prototype. Try: torch on, torch off, open calculator."
             textSize = 17f
             setPadding(0, 28, 0, 28)
         }
         command = EditText(this).apply { hint = "Tell Sheru Bhai what to do"; isSingleLine = true }
         val send = Button(this).apply { text = "Run command"; setOnClickListener { execute(command.text.toString()) } }
-        val access = Button(this).apply {
-            text = "Enable optional navigation access"
-            setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-        }
         layout.addView(title)
         layout.addView(result)
         layout.addView(command, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         layout.addView(send)
-        layout.addView(access)
         setContentView(layout)
     }
 
@@ -49,17 +41,10 @@ class MainActivity : Activity() {
         result.text = when {
             text == "torch on" || text == "flashlight on" || text == "turn on torch" -> setTorch(true)
             text == "torch off" || text == "flashlight off" || text == "turn off torch" -> setTorch(false)
-            text == "home" || text == "go home" -> navigate(AccessibilityService.GLOBAL_ACTION_HOME)
-            text == "back" || text == "go back" -> navigate(AccessibilityService.GLOBAL_ACTION_BACK)
-            text == "recents" -> navigate(AccessibilityService.GLOBAL_ACTION_RECENTS)
-            text == "scroll down" -> if (SheruAccessibilityService.active?.scrollDown() == true) "Scrolling" else "Enable navigation access first"
             text.startsWith("open ") -> openApp(text.removePrefix("open ").trim())
-            else -> "Not supported yet. Try torch on/off, open calculator, home, back or scroll down."
+            else -> "Not supported yet. Try torch on/off or open calculator."
         }
     }
-
-    private fun navigate(action: Int): String =
-        if (SheruAccessibilityService.active?.navigate(action) == true) "Done" else "Enable navigation access first"
 
     private fun setTorch(on: Boolean): String {
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
